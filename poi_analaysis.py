@@ -25,19 +25,19 @@ def listValues(fc, attribute, workspace):
     arcpy.env.workspace = workspace
 
     # Will contain all unique attribute values
-    value_set = []
+    valueSet = []
     try:
-        # Iterate through fc and populate value_set with unique attribute values
+        # Iterate through fc and populate valueSet with unique attribute values
         with arcpy.da.SearchCursor(fc, attribute) as cursor:
             for row in cursor:
-                if row[0] not in value_set:
-                    value_set.append(row[0])
+                if row[0] not in valueSet:
+                    valueSet.append(row[0])
     except Exception:
         e = sys.exc_info()[1]
         print(e.args[0])
         
     # return list of unique attribute values
-    return value_set
+    return valueSet
 
 # Determines whether given feature class is a Point feature class
 def checkIfPointFeatureClass(fcPoint):
@@ -59,6 +59,8 @@ def createAreaField(fcPolygon, workspace):
     arcpy.env.overwriteOutput = True
     arcpy.env.workspace = workspace
 
+    checkIfPolygonFeatureClass(fcPolygon)
+
     try:
         arcpy.management.AddField(fcPolygon,"area_sqmiles", "DOUBLE")
         arcpy.CalculateGeometryAttributes_management(fcPolygon, 
@@ -77,6 +79,8 @@ def getAverageRichness (fcPolygonList, richnessField, workspace):
     try:
         # Calculate richnessField average for each fc in fcPolygonList
         for fcPolygon in fcPolygonList:
+            # Check for correct FC type
+            checkIfPolygonFeatureClass(fcPolygon)
             richnessValues = [] # Will contain all richnes values from current fc
             # Append richness values to list
             with arcpy.da.SearchCursor(fcPolygon, richnessField) as cursor:
@@ -111,16 +115,19 @@ def countUniquePointsWithinPolygon(fcPolygon, fcPoint, pointFieldName, outputNam
     arcpy.env.overwriteOutput = True
     arcpy.env.workspace = input_geodatabase
 
+    # Check for correct fc types
+    checkIfPolygonFeatureClass(fcPolygon)
+    checkIfPointFeatureClass(fcPoint)
 
     #Creates data layer and data table with the point count
-    summary_layer = outputName
+    summaryLayer = outputName
     summary_table = outputName + "_table"
 
     try:
         # Execute summarize within
         arcpy.SummarizeWithin_analysis(fcPolygon, 
         	                       fcPoint,
-                                   summary_layer, 
+                                   summaryLayer, 
                                    "KEEP_ALL", 
                                    group_field = pointFieldName,
                                    out_group_table = summary_table)
@@ -132,7 +139,7 @@ def countUniquePointsWithinPolygon(fcPolygon, fcPoint, pointFieldName, outputNam
         # Adds new field to polygon layer. This field will be an integer and will store the amount of
         # Points with the specefied attribute values that are inside of each polygon.
         newField = "species_richness"  
-        arcpy.management.AddField(summary_layer, newField, "LONG")
+        arcpy.management.AddField(summaryLayer, newField, "LONG")
     except Exception:
         e = sys.exc_info()[1]
         print(e.args[0])
@@ -153,14 +160,14 @@ def countUniquePointsWithinPolygon(fcPolygon, fcPoint, pointFieldName, outputNam
     
     try:
         # Create area field
-        createAreaField(summary_layer, input_geodatabase)
+        createAreaField(summaryLayer, input_geodatabase)
     except Exception:
         e = sys.exc_info()[1]
         print(e.args[0])
     
     try:
         # Populating new point count field of input fc with the point count calculated by SummarizeWithin
-        with arcpy.da.UpdateCursor(summary_layer, ["Join_ID", newField]) as cursor:
+        with arcpy.da.UpdateCursor(summaryLayer, ["Join_ID", newField]) as cursor:
             for row in cursor:
                 if row[0] in species_richness.keys():
                     row[1] = species_richness[row[0]]
@@ -171,29 +178,36 @@ def countUniquePointsWithinPolygon(fcPolygon, fcPoint, pointFieldName, outputNam
         e = sys.exc_info()[1]
         print(e.args[0])
     
-    return summary_layer
+    return summaryLayer
 
 ###################################################################################################
 #   This function normalizes the species_richness with area in square meters and normal richness
 ###################################################################################################
 def calculateSpeciesRichness(fcPolygon, fcPoint, pointFieldName, outputName, workspace):
+    arcpy.env.overwriteOutput = True
+    arcpy.env.workspace = workspace
+
+    # Check for correct fc types
+    checkIfPolygonFeatureClass(fcPolygon)
+    checkIfPointFeatureClass(fcPoint)
+
     try:
         # Creates summary layer with unique count
-        summary_layer = countUniquePointsWithinPolygon(fcPolygon, fcPoint, pointFieldName, outputName, workspace)
+        summaryLayer = countUniquePointsWithinPolygon(fcPolygon, fcPoint, pointFieldName, outputName, workspace)
     except Exception:
         e = sys.exc_info()[1]
         print(e.args[0])
 
     try:
         #Creates richness field, will be populated later
-        arcpy.management.AddField(summary_layer, "species_richness_norm", "FLOAT")
+        arcpy.management.AddField(summaryLayer, "species_richness_norm", "FLOAT")
     except Exception:
         e = sys.exc_info()[1]
         print(e.args[0])
     
     try:
         # Normalizes poi richness with block area
-        with arcpy.da.UpdateCursor(summary_layer, ["species_richness_norm", "species_richness", "area_sqmiles"]) as cursor:
+        with arcpy.da.UpdateCursor(summaryLayer, ["species_richness_norm", "species_richness", "area_sqmiles"]) as cursor:
             for row in cursor:
                 row[0] = row[1]/row[2]
                 cursor.updateRow(row)
